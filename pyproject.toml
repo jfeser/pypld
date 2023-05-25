@@ -1,0 +1,33 @@
+[project]
+name = "pypld"
+version = "0.0.1"
+authors = [
+  { name="Jack Feser", email="feser@mit.edu" },
+]
+description = "Utilities for defining programming language semantics in Python"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/jfeser/pypld"
+"Bug Tracker" = "https://github.com/jfeser/pypld/issues"
+[tool.poetry]
+name = "pypld"
+version = "0.1.0"
+description = ""
+authors = ["Jack Feser <feser@mit.edu>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+graphviz = "^0.20.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
