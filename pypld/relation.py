@@ -3,6 +3,8 @@ import graphviz
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from utils import texescape
+
 
 @dataclass
 class Rule:
@@ -22,7 +24,7 @@ class DerivationGraph(graphviz.Digraph):
         return str(self.fresh_id)
 
 
-class Relation:
+class _Relation:
     def __init__(self, name):
         self.name = name
         self.rules = []
@@ -40,12 +42,6 @@ class Relation:
 
         return decorator
 
-    def _str_judgement(self, lhs, rhs):
-        return f"{lhs} =>{self.name} {rhs}"
-
-    def _tex_judgement(self, lhs, rhs):
-        return f"{lhs} \\Downarrow_{{\\mathit{{{self.name}}}}} {rhs}"
-
     def _matching_rules(self, args):
         for rule in self.rules:
             if rule.types is None or all(
@@ -53,6 +49,14 @@ class Relation:
                 for (arg, type_) in zip(args, rule.types)
             ):
                 yield (rule, args)
+
+
+class BigStepRelation(_Relation):
+    def _str_judgement(self, lhs, rhs):
+        return f"{lhs} =>{self.name} {rhs}"
+
+    def _tex_judgement(self, lhs, rhs):
+        return f"{lhs} \\Downarrow_{{\\mathit{{{texescape(self.name)}}}}} {rhs}"
 
     def eval(self, *args):
         for (rule, rule_args) in self._matching_rules(args):
@@ -100,6 +104,57 @@ class Relation:
         self._deriv_graph(g, None, args)
         return g
 
-    def derivation_tex(self, *args):
-        g = self.derivation_graph(*args)
-        return g.source
+
+class SmallStepRelation(_Relation):
+    def _str_judgement(self, lhs, rhs):
+        return f"{lhs} ->{self.name} {rhs}"
+
+    def _tex_judgement(self, lhs, rhs):
+        return f"{lhs} \\rightarrow_{{\\mathit{{{texescape(self.name)}}}}} {rhs}"
+
+    def eval(self, *args):
+        for (rule, rule_args) in self._matching_rules(args):
+
+            def run(rel, *args):
+                return rel.eval(*args)
+
+            result = rule.fn(run, *rule_args)
+            if result is not None:
+                return result
+
+    def _deriv_graph(self, graph, parent_id, args):
+        current_id = graph.fresh_node_id()
+        for (rule, rule_args) in self._matching_rules(args):
+
+            def run(rel, *args):
+                return rel._deriv_graph(graph, current_id, args)
+
+            result = rule.fn(run, *rule_args)
+            if result is not None:
+                graph.node(
+                    current_id,
+                    label=self._str_judgement(rule_args, result),
+                    xlabel=f"{self.name}-{rule.name}",
+                )
+                if parent_id is not None:
+                    graph.edge(current_id, parent_id)
+                return result
+
+    def derivation_graph(self, *state):
+        """Return a DerivationGraph() that represents (one of) the derivation(s)
+        produced by running the rules of this relation on the given arguments.
+
+        Parameters:
+        *args: The inputs to the relation.
+
+        Returns:
+        A DerivationGraph() object.
+
+        Raises:
+        StuckError: If
+
+        """
+        g = DerivationGraph()
+        q = []
+        self._deriv_graph(g, q, state)
+        return g
