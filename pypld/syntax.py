@@ -1,9 +1,16 @@
 import dataclasses
 from dataclasses import dataclass, replace
-from typing import Optional, Callable, TypeVar, Union
-import functools
+from typing import Optional, TypeVar, dataclass_transform
 
 from utils import fresh, texescape
+
+
+T = TypeVar("T")
+
+
+@dataclass_transform()
+def ast(cls):
+    return dataclass(cls, frozen=True, unsafe_hash=True)
 
 
 precedence = {
@@ -26,7 +33,7 @@ precedence = {
 }
 
 
-@dataclass(frozen=True)
+@ast
 class Term:
     def free(self) -> set["Var"]:
         """Return the free variables in a type."""
@@ -41,10 +48,12 @@ class Term:
         raise NotImplementedError
 
 
+@ast
 class Type(Term):
     pass
 
 
+@ast
 class Expr(Term):
     def __lt__(self, other):
         return Binop("<", self, other)
@@ -86,6 +95,22 @@ class Expr(Term):
         return Unop("not", self)
 
 
+@ast
+class Var(Type, Expr):
+    """Type variables"""
+
+    name: str
+
+    def free(self):
+        return set([self])
+
+    def subst(self, var, term):
+        return term if self == var else self
+
+    def tex(self, prec=0):
+        return f"\\mathsf{{{texescape(self.name)}}}"
+
+
 def simple_free(self) -> set[Var]:
     """Take the union of free of all fields of self that have a free method"""
     return set.union(
@@ -97,10 +122,7 @@ def simple_free(self) -> set[Var]:
     )
 
 
-T = TypeVar("T")
-
-
-def simple_subst(self: T, var: Var, term: Term) -> T:
+def simple_subst(self, var: Var, term: Term):
     """Substitute in all fields of self that have a subst method"""
     return replace(
         self,
@@ -120,23 +142,7 @@ class _PrimT:
         return self
 
 
-@dataclass(frozen=True)
-class Var(Term):
-    """Type variables"""
-
-    name: str
-
-    def free(self):
-        return set([self])
-
-    def subst(self, var, term):
-        return term if self == var else self
-
-    def tex(self, prec=0):
-        return f"\\mathsf{{{texescape(self.name)}}}"
-
-
-@dataclass(frozen=True)
+@ast
 class IntT(Type, _PrimT):
     """Integer types"""
 
@@ -144,7 +150,7 @@ class IntT(Type, _PrimT):
         return "\\mathsf{Int}"
 
 
-@dataclass(frozen=True)
+@ast
 class BoolT(Type, _PrimT):
     """Boolean types"""
 
@@ -152,7 +158,7 @@ class BoolT(Type, _PrimT):
         return "\\mathsf{Bool}"
 
 
-@dataclass(frozen=True)
+@ast
 class ArrowT(Type):
     """Function types"""
 
@@ -167,7 +173,7 @@ class ArrowT(Type):
         return body if prec <= 9 else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class _QuantT(Type):
     """Quantified types"""
 
@@ -195,7 +201,7 @@ class _QuantT(Type):
         return body if prec <= 9 else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class ExistsT(_QuantT):
     """Existential types"""
 
@@ -203,7 +209,7 @@ class ExistsT(_QuantT):
         super().__init__("\\exists", var, type_)
 
 
-@dataclass(frozen=True)
+@ast
 class ForallT(_QuantT):
     """Universal types"""
 
@@ -211,7 +217,7 @@ class ForallT(_QuantT):
         super().__init__("\\exists", var, type_)
 
 
-@dataclass(frozen=True)
+@ast
 class RecordT(Type):
     """Record types"""
 
@@ -220,7 +226,7 @@ class RecordT(Type):
     def free(self) -> set[Var]:
         return set.union(*[t.free() for t in self.fields.values()])
 
-    def subst(self, var: Var, type_: Type) -> RecordT:
+    def subst(self, var: Var, type_: Type):
         return RecordT({k: t.subst(var, type_) for (k, t) in self.fields.items()})
 
     def tex(self, prec=0):
@@ -230,7 +236,7 @@ class RecordT(Type):
         return f"\\{{{body}\\}}"
 
 
-@dataclass(frozen=True)
+@ast
 class TopT(Type, _PrimT):
     """Top type"""
 
@@ -246,7 +252,7 @@ class _Const:
         return self
 
 
-@dataclass(frozen=True)
+@ast
 class Int(Expr, _Const):
     """Integers"""
 
@@ -256,7 +262,7 @@ class Int(Expr, _Const):
         return str(self.value)
 
 
-@dataclass(frozen=True)
+@ast
 class Bool(Expr, _Const):
     """Booleans"""
 
@@ -266,7 +272,7 @@ class Bool(Expr, _Const):
         return str(self.value)
 
 
-@dataclass(frozen=True)
+@ast
 class Ite(Expr):
     """If-then-else expressions"""
 
@@ -282,7 +288,7 @@ class Ite(Expr):
         return body if prec <= 9 else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class App(Expr):
     """Function application"""
 
@@ -297,7 +303,7 @@ class App(Expr):
         return body if 10 > prec else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class Lam(Expr):
     """Anonymous functions"""
 
@@ -339,7 +345,7 @@ class Lam(Expr):
         return body if prec <= 9 else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class TypeAbs(Expr):
     """Type abstraction"""
 
@@ -355,18 +361,18 @@ class TypeAbs(Expr):
 
         free = term.free()
         if self.var in free:
-            new_var = VarT(fresh(self.body.free() | free))
+            new_var = Var(fresh(self.body.free() | free))
             new_body = self.body.subst(self.var, new_var)
-            return TypeAbs(new_var, new_body).subst(var, expr)
+            return TypeAbs(new_var, new_body).subst(var, term)
 
-        return TypeAbs(self.var, self.body.subst(var, expr))
+        return TypeAbs(self.var, self.body.subst(var, term))
 
     def tex(self, prec=0):
-        body = f"\\tabs{{{var}}}{{{self.body.tex(10)}}}"
+        body = f"\\tabs{{{self.var.tex()}}}{{{self.body.tex(10)}}}"
         return body if prec <= 9 else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class TypeApp(Expr):
     """Type application"""
 
@@ -381,7 +387,7 @@ class TypeApp(Expr):
         return body if prec <= 9 else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class Record(Expr):
     """Records"""
 
@@ -394,7 +400,7 @@ class Record(Expr):
         return Record({k: v.subst(var, expr) for k, v in self.fields.items()})
 
 
-@dataclass(frozen=True)
+@ast
 class Proj(Expr):
     """Record field access (projection)"""
 
@@ -405,10 +411,10 @@ class Proj(Expr):
     subst = simple_subst
 
     def tex(self, prec=0):
-        return f"{expr.tex(10)} \\proj {field}"
+        return f"{self.expr.tex(10)} \\proj {self.field}"
 
 
-@dataclass(frozen=True)
+@ast
 class Unop(Expr):
     op: str
     expr: Expr
@@ -422,7 +428,7 @@ class Unop(Expr):
         return body if prec < op_prec else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class Ref(Unop):
     """Reference"""
 
@@ -430,7 +436,7 @@ class Ref(Unop):
         super().__init__("ref", expr)
 
 
-@dataclass(frozen=True)
+@ast
 class Deref(Unop):
     """Dereference"""
 
@@ -438,7 +444,22 @@ class Deref(Unop):
         super().__init__("!", expr)
 
 
-@dataclass(frozen=True)
+@ast
+class Binop(Expr):
+    op: str
+    lhs: Expr
+    rhs: Expr
+
+    free = simple_free
+    subst = simple_subst
+
+    def tex(self, prec=0):
+        op_prec = precedence.get(self.op, 0)
+        body = f"{self.lhs.tex(op_prec)} {self.op} {self.rhs.tex(op_prec)}"
+        return body if op_prec > prec else f"({body})"
+
+
+@ast
 class Set(Binop):
     """Reference cell assignment"""
 
@@ -446,7 +467,7 @@ class Set(Binop):
         super().__init__(":=", lhs, rhs)
 
 
-@dataclass(frozen=True)
+@ast
 class Loc(Expr, _Const):
     """Location"""
 
@@ -456,7 +477,7 @@ class Loc(Expr, _Const):
         return f"\\loc{{{self.loc}}}"
 
 
-@dataclass(frozen=True)
+@ast
 class Unit(Expr, _Const):
     """Unit"""
 
@@ -464,7 +485,7 @@ class Unit(Expr, _Const):
         return "()"
 
 
-@dataclass(frozen=True)
+@ast
 class Let(Expr):
     """Let binding"""
 
@@ -493,7 +514,7 @@ class Let(Expr):
             | (set() if self.type_ is None else self.type_.free())
         )
 
-    def subst(self, var: Var, expr: Term) -> Let:
+    def subst(self, var: Var, expr: Term):
         if var == self.var:
             return self
 
@@ -511,11 +532,11 @@ class Let(Expr):
         )
 
     def tex(self, prec=0):
-        body = f"\\letu{{{texescape(self.var)}}}{{{term_tex(rhs, 0)}}}{{{term_tex(body, 0)}}}"
+        body = f"\\letu{{{self.var.tex()}}}{{{self.rhs.tex()}}}{{{self.body.tex()}}}"
         return body if 10 > prec else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class Pack(Expr):
     """Pack"""
 
@@ -533,7 +554,7 @@ class Pack(Expr):
         return body if 10 > prec else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class Unpack(Expr):
     """Unpack"""
 
@@ -567,27 +588,12 @@ class Unpack(Expr):
         return body if 10 > prec else f"({body})"
 
 
-@dataclass(frozen=True)
-class Binop(Expr):
-    op: str
-    lhs: Expr
-    rhs: Expr
-
-    free = simple_free
-    subst = simple_subst
-
-    def tex(self, prec=0):
-        op_prec = precedence.get(op, 0)
-        body = f"{lhs.tex(op_prec)} {op} {rhs.tex(op_prec)}"
-        return body if op_prec > prec else f"({body})"
-
-
-@dataclass(frozen=True)
+@ast
 class Stmt(Term):
     pass
 
 
-@dataclass(frozen=True)
+@ast
 class Print(Stmt):
     expr: Expr
 
@@ -598,7 +604,7 @@ class Print(Stmt):
         return f"\\print{{{self.expr.tex()}}}"
 
 
-@dataclass(frozen=True)
+@ast
 class Seq(Stmt):
     lhs: Stmt
     rhs: Stmt
@@ -607,11 +613,11 @@ class Seq(Stmt):
     free = simple_free
 
     def tex(self, prec=0):
-        body = f"{lhs.tex(10)}; {rhs.tex(10)}"
+        body = f"{self.lhs.tex(10)}; {self.rhs.tex(10)}"
         return body if 10 > prec else f"({body})"
 
 
-@dataclass(frozen=True)
+@ast
 class Skip(Stmt):
     subst = simple_subst
     free = simple_free
@@ -620,12 +626,12 @@ class Skip(Stmt):
         return "\\skip"
 
 
-@dataclass(frozen=True)
+@ast
 class Assign(Stmt):
     lhs: Var
     rhs: Expr
 
-    def subst(self, var, term) -> Assign:
+    def subst(self, var: Var, term: Term):
         return replace(self, rhs=self.rhs.subst(var, term))
 
     def free(self) -> set[Var]:
@@ -636,7 +642,7 @@ class Assign(Stmt):
         return f"\\assign{{{self.lhs.tex()}}}{{{self.rhs.tex()}}}"
 
 
-@dataclass(frozen=True)
+@ast
 class If(Stmt):
     cond: Expr
     then: Stmt
@@ -649,7 +655,7 @@ class If(Stmt):
         return f"\\if{{{self.cond.tex()}}}{{{self.then.tex()}}}{{{self.else_.tex()}}}"
 
 
-@dataclass(frozen=True)
+@ast
 class While(Stmt):
     cond: Expr
     body: Stmt
@@ -659,3 +665,22 @@ class While(Stmt):
 
     def tex(self, prec=0) -> str:
         return f"\\while{{{self.cond.tex()}}}{{{self.body.tex()}}}"
+
+
+@ast
+class Env(dict):
+    def tex(self, prec=0) -> str:
+        if len(self) == 0:
+            return "\\emptyset"
+        else:
+            return (
+                "\\{"
+                + ", ".join(f"{var}: {term.tex()}" for (var, term) in self.items())
+                + "\\}"
+            )
+
+    def bind(self, key, value):
+        return Env({**self, key: value})
+
+    def __setitem__(self, key, value):
+        raise RuntimeError("Environments are immutable")
