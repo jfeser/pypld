@@ -1,9 +1,9 @@
 import networkx as nx
 import graphviz
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from utils import texescape
+from pypld.utils import texescape
 
 
 @dataclass
@@ -18,10 +18,14 @@ class StuckError(Exception):
     message: str
 
 
-class DerivationGraph(graphviz.Digraph):
+@dataclass(frozen=True, unsafe_hash=True)
+class FreshNode:
+    pass
+
+
+class DerivationGraph(nx.DiGraph):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.node_attr["shape"] = "box"
         self.fresh_id = 0
 
     def fresh_node_id(self):
@@ -36,10 +40,10 @@ def rule(name: str, matches: Optional[list[Any]] = None):
     return decorator
 
 
+@dataclass
 class _Relation:
-    def __init__(self, name):
-        self.name = name
-        self.rules = {}
+    name: str
+    rules: dict[str, Rule] = field(default_factory=dict)
 
     def __str__(self):
         return f'Relation("{self.name}", {list(self.rules.keys())})'
@@ -47,8 +51,7 @@ class _Relation:
     def _matching_rules(self, args):
         for rule in self.rules.values():
             if rule.types is None or all(
-                type_ is Any or isinstance(arg, type_)
-                for (arg, type_) in zip(args, rule.types)
+                type_ is Any or isinstance(arg, type_) for (arg, type_) in zip(args, rule.types)
             ):
                 yield (rule, args)
 
@@ -66,17 +69,30 @@ class BigStepRelation(_Relation):
     def _tex_judgement(self, lhs, rhs):
         return f"{lhs} \\Downarrow_{{\\mathit{{{texescape(self.name)}}}}} {rhs}"
 
-    def _eval(self, *args):
+    def _eval(self, args):
         for (rule, rule_args) in self._matching_rules(args):
 
             def run(rel, *args):
-                return rel.eval(*args)
+                return rel._eval(args)
 
             result = rule.fn(run, *rule_args)
             if result is not None:
                 return result
-        else:
-            raise StuckError(f"No {self.name} rule applies to {args}")
+
+        raise StuckError(f"No {self.name} rule applies to {args}")
+
+    def eval_all(self, *args):
+        """
+        Evaluate the relation on the given arguments.
+
+        Parameters:
+        *args: The inputs to the relation.
+
+        Returns:
+        The output of the relation.
+        """
+
+        return self._eval(args)
 
     def eval(self, *args):
         """
@@ -89,11 +105,12 @@ class BigStepRelation(_Relation):
         The output of the relation.
         """
 
-        result = self._eval(args)
+        return self._eval(args)
 
     def _deriv_graph(self, graph, parent_id, args):
-        current_id = graph.fresh_node_id()
         for (rule, rule_args) in self._matching_rules(args):
+
+            current_id = graph.fresh_node_id()
 
             def run(rel, *args):
                 return rel._deriv_graph(graph, current_id, args)
